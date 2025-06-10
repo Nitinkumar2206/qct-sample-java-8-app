@@ -1,0 +1,191 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  photo-app
+  
+  Serverless photo application that enables photo uploads and downloads via API Gateway,
+  stores photos in S3, and metadata in DynamoDB.
+
+# Global values that are applied to all resources
+Globals:
+  Function:
+    Timeout: 30
+    MemorySize: 128
+    Tracing: Active
+    LoggingConfig:
+      LogFormat: JSON
+  Api:
+    TracingEnabled: true
+    Cors:
+      AllowMethods: "'GET,POST,OPTIONS'"
+      AllowHeaders: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+      AllowOrigin: "'*'"
+
+Parameters:
+  Stage:
+    Type: String
+    Default: dev
+    Description: The deployment stage (dev, test, prod)
+
+Resources:
+  # S3 Bucket for storing photos
+  PhotosBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "photo-app-photos-${AWS::AccountId}-${Stage}"
+      AccessControl: Private
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldObjects
+            Status: Enabled
+            ExpirationInDays: 365  # Adjust as needed
+
+  # DynamoDB table for storing photo metadata
+  PhotosTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "photo-app-photos-${Stage}"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: photoId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: photoId
+          KeyType: HASH
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  # API Gateway HTTP API
+  PhotosApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: !Ref Stage
+      CorsConfiguration:
+        AllowOrigins:
+          - '*'
+        AllowHeaders:
+          - Content-Type
+          - X-Amz-Date
+          - Authorization
+          - X-Api-Key
+          - X-Amz-Security-Token
+        AllowMethods:
+          - GET
+          - POST
+          - OPTIONS
+
+  # Lambda function for uploading photos
+  UploadPhotoFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/upload_photo/
+      Handler: app.lambda_handler
+      Runtime: python3.9
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          PHOTOS_TABLE: !Ref PhotosTable
+          PHOTOS_BUCKET: !Ref PhotosBucket
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref PhotosTable
+        - S3CrudPolicy:
+            BucketName: !Ref PhotosBucket
+      Events:
+        UploadPhoto:
+          Type: HttpApi
+          Properties:
+            Path: /photos
+            Method: POST
+            ApiId: !Ref PhotosApi
+
+  # Lambda function for getting photos
+  GetPhotoFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/get_photo/
+      Handler: app.lambda_handler
+      Runtime: python3.9
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          PHOTOS_TABLE: !Ref PhotosTable
+          PHOTOS_BUCKET: !Ref PhotosBucket
+          URL_EXPIRATION: '3600'  # 1 hour
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref PhotosTable
+        - S3ReadPolicy:
+            BucketName: !Ref PhotosBucket
+      Events:
+        GetPhoto:
+          Type: HttpApi
+          Properties:
+            Path: /photos/{photoId}
+            Method: GET
+            ApiId: !Ref PhotosApi
+
+  # S3 bucket for hosting the static website
+  WebsiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "photo-app-website-${AWS::AccountId}-${Stage}"
+      AccessControl: PublicRead
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: error.html
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders:
+              - '*'
+            AllowedMethods:
+              - GET
+              - HEAD
+            AllowedOrigins:
+              - '*'
+            MaxAge: 3000
+
+  # Bucket policy to allow public read access to the website bucket
+  WebsiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref WebsiteBucket
+      PolicyDocument:
+        Statement:
+          - Action:
+              - 's3:GetObject'
+            Effect: Allow
+            Resource: !Sub "arn:aws:s3:::${WebsiteBucket}/*"
+            Principal: '*'
+
+Outputs:
+  PhotosApiEndpoint:
+    Description: "API Gateway endpoint URL for the photo application"
+    Value: !Sub "https://${PhotosApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}"
+  
+  UploadPhotoFunction:
+    Description: "Upload Photo Lambda Function ARN"
+    Value: !GetAtt UploadPhotoFunction.Arn
+  
+  GetPhotoFunction:
+    Description: "Get Photo Lambda Function ARN"
+    Value: !GetAtt GetPhotoFunction.Arn
+  
+  PhotosBucket:
+    Description: "S3 bucket for storing photos"
+    Value: !Ref PhotosBucket
+  
+  PhotosTable:
+    Description: "DynamoDB table for storing photo metadata"
+    Value: !Ref PhotosTable
+  
+  WebsiteURL:
+    Description: "URL for the photo application website"
+    Value: !Sub "http://${WebsiteBucket}.s3-website-${AWS::Region}.amazonaws.com"

@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Photo App</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        .container {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        .card {
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input[type="file"] {
+            display: block;
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        .photo-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 15px;
+        }
+        .photo-item {
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 10px;
+            text-align: center;
+        }
+        .photo-item img {
+            max-width: 100%;
+            height: auto;
+            border-radius: 4px;
+        }
+        .photo-item p {
+            margin: 5px 0;
+            font-size: 14px;
+            color: #666;
+        }
+        .error {
+            color: red;
+            margin-top: 5px;
+        }
+        .success {
+            color: green;
+            margin-top: 5px;
+        }
+        #loadingIndicator {
+            display: none;
+            text-align: center;
+            margin: 10px 0;
+        }
+        #photoIdInput {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Photo App</h1>
+    
+    <div class="container">
+        <!-- Upload Photo Section -->
+        <div class="card">
+            <h2>Upload Photo</h2>
+            <form id="uploadForm">
+                <div class="form-group">
+                    <label for="photoFile">Select Photo:</label>
+                    <input type="file" id="photoFile" accept="image/*" required>
+                </div>
+                <button type="submit">Upload Photo</button>
+                <div id="uploadStatus"></div>
+            </form>
+        </div>
+        
+        <!-- Get Photo Section -->
+        <div class="card">
+            <h2>Get Photo</h2>
+            <div class="form-group">
+                <label for="photoIdInput">Photo ID:</label>
+                <input type="text" id="photoIdInput" placeholder="Enter photo ID">
+                <button id="getPhotoBtn">Get Photo</button>
+            </div>
+            <div id="photoResult"></div>
+        </div>
+        
+        <!-- Loading Indicator -->
+        <div id="loadingIndicator">Loading...</div>
+    </div>
+
+    <script>
+        // Configuration - Replace with your API Gateway endpoint
+        const API_ENDPOINT = 'https://your-api-id.execute-api.your-region.amazonaws.com/dev';
+        
+        // DOM Elements
+        const uploadForm = document.getElementById('uploadForm');
+        const photoFile = document.getElementById('photoFile');
+        const uploadStatus = document.getElementById('uploadStatus');
+        const photoIdInput = document.getElementById('photoIdInput');
+        const getPhotoBtn = document.getElementById('getPhotoBtn');
+        const photoResult = document.getElementById('photoResult');
+        const loadingIndicator = document.getElementById('loadingIndicator');
+        
+        // Upload Photo
+        uploadForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            if (!photoFile.files[0]) {
+                showError(uploadStatus, 'Please select a file to upload');
+                return;
+            }
+            
+            showLoading(true);
+            
+            try {
+                const file = photoFile.files[0];
+                const reader = new FileReader();
+                
+                reader.onload = async function(event) {
+                    // Get base64 encoded file data
+                    const base64Data = event.target.result.split(',')[1];
+                    
+                    // Prepare request payload
+                    const payload = {
+                        photo: base64Data,
+                        fileName: file.name
+                    };
+                    
+                    try {
+                        const response = await fetch(`${API_ENDPOINT}/photos`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify(payload)
+                        });
+                        
+                        const data = await response.json();
+                        
+                        if (response.ok) {
+                            showSuccess(uploadStatus, `Photo uploaded successfully! Photo ID: ${data.photoId}`);
+                            uploadForm.reset();
+                        } else {
+                            showError(uploadStatus, `Error: ${data.error || 'Failed to upload photo'}`);
+                        }
+                    } catch (error) {
+                        showError(uploadStatus, `Error: ${error.message}`);
+                    } finally {
+                        showLoading(false);
+                    }
+                };
+                
+                reader.onerror = function() {
+                    showError(uploadStatus, 'Error reading file');
+                    showLoading(false);
+                };
+                
+                reader.readAsDataURL(file);
+                
+            } catch (error) {
+                showError(uploadStatus, `Error: ${error.message}`);
+                showLoading(false);
+            }
+        });
+        
+        // Get Photo
+        getPhotoBtn.addEventListener('click', async () => {
+            const photoId = photoIdInput.value.trim();
+            
+            if (!photoId) {
+                showError(photoResult, 'Please enter a photo ID');
+                return;
+            }
+            
+            showLoading(true);
+            
+            try {
+                const response = await fetch(`${API_ENDPOINT}/photos/${photoId}`, {
+                    method: 'GET'
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    // Display the photo and metadata
+                    photoResult.innerHTML = `
+                        <div class="success">Photo found!</div>
+                        <div class="photo-item">
+                            <img src="${data.downloadUrl}" alt="${data.fileName}">
+                            <p><strong>File Name:</strong> ${data.fileName}</p>
+                            <p><strong>Upload Date:</strong> ${new Date(data.uploadTimestamp).toLocaleString()}</p>
+                            <p><strong>Photo ID:</strong> ${data.photoId}</p>
+                            <p><a href="${data.downloadUrl}" target="_blank" download="${data.fileName}">Download Photo</a></p>
+                        </div>
+                    `;
+                } else {
+                    showError(photoResult, `Error: ${data.error || 'Failed to retrieve photo'}`);
+                }
+            } catch (error) {
+                showError(photoResult, `Error: ${error.message}`);
+            } finally {
+                showLoading(false);
+            }
+        });
+        
+        // Helper Functions
+        function showError(element, message) {
+            element.innerHTML = `<div class="error">${message}</div>`;
+        }
+        
+        function showSuccess(element, message) {
+            element.innerHTML = `<div class="success">${message}</div>`;
+        }
+        
+        function showLoading(isLoading) {
+            loadingIndicator.style.display = isLoading ? 'block' : 'none';
+        }
+    </script>
+</body>
+</html>
